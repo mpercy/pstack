@@ -388,6 +388,8 @@ static Symbols loadSyms(const char *fname)
   int fd;
   Symbols syms;
 
+  if (*fname == '\0')
+    return (Symbols) 0;
   syms = newSyms(fname);
   if ((fd = open(fname, O_RDONLY)) < 0)
   {
