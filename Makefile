@@ -28,7 +28,7 @@ pstack : pstack.c
 	$(CC) $(CFLAGS) -o pstack pstack.c
 
 clean:
-	rm pstack
+	rm -f pstack
 
 install : pstack
 	mkdir -p $(BINDIR)
