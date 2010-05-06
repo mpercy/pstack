@@ -413,6 +413,7 @@ static void readDynoData(Symbols syms, int pid)
   Elf32_Addr addr;
   const Elf32_Sym *dyn = lookupSymInTable("_DYNAMIC", syms);
 
+  if (!dyn) quit("could not find _DYNAMIC symbol");
   for (errno = done = 0, addr = dyn->st_value; !done && !errno; addr += 8) {
     val = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
     if (val == -1 && errno) break;
