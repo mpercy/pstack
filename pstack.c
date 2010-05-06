@@ -49,6 +49,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <limits.h>
 
 static int thePid; /* pid requested by caller. */
 static struct {
@@ -65,25 +66,21 @@ static int attach(int pid)
   int status;
 
   errno = 0;
-  ptrace(PTRACE_ATTACH, pid, 0, 0);
-
-  if (errno)
+  if (-1 == ptrace(PTRACE_ATTACH, pid, 0, 0))
     return errno;
-
-  waitpid (pid, &status, WUNTRACED);
 
   /* If we failed due to an ECHILD, then retry with the __WCLONE
      flag.  Note we loop as the the PID we get back may not be
      one we care about.  */
-  if (errno == ECHILD) {
+  if (-1 == waitpid(pid, &status, WUNTRACED) && errno == ECHILD) {
     int x;
 
-    errno = 0;
     while (1) {
       x = waitpid (-1, &status, (__WCLONE));
 
-      if (x == pid || x < 0 || errno != 0) break;
+      if (x == pid || x < 0) break;
     }
+    if (x) errno = 0;
   }
 
   return errno;
@@ -100,9 +97,9 @@ static int detachall(void)
   if (threads.found) {
     for (i = 0; i < threads.npids; i++) {
       if (threads.pids[i] != thePid && threads.attached[i]) {
-        errno = 0;
-        ptrace(PTRACE_DETACH, threads.pids[i], 0, 0);
-        if (errno) perror("detach");
+        if (-1==ptrace(PTRACE_DETACH, threads.pids[i], 0, 0)) {
+          perror("detach");
+	}
       }
     }
   }
@@ -110,9 +107,9 @@ static int detachall(void)
   /* Now attach from the thread we initially attached to.  Note that
      the PTRACE_DETACH will continue the thread, so there is no need
      is issue a separate PTRACE_CONTINUE call.  */
-  ptrace(PTRACE_DETACH, thePid, 0, 0);
-
-  return errno;
+  if (-1 == ptrace(PTRACE_DETACH, thePid, 0, 0))
+    return errno;
+  return 0;
 }
 
 static void handle_signal (int signum)
@@ -244,7 +241,7 @@ static int readSym(Symbols syms, int pid, const char *name, int *val)
   if (!(sym = findLocalSym(name, syms))) return 0;
   errno = 0;
   *val = ptrace(PTRACE_PEEKDATA, pid, sym->st_value, 0);
-  if (errno) {
+  if (-1 == *val && errno) {
     perror("ptrace");
     quit("Could not read thread debug info.");
   }
@@ -255,6 +252,7 @@ static void checkForThreads(Symbols syms, int pid)
 {
   const Elf32_Sym *handles;
   int i, tpid, hsize, descOff, pidOff, numPids, *pptr;
+  int error_occured = 0;
   Elf32_Addr descr;
 
   if (!findLocalSym("__pthread_threads_debug", syms) ||
@@ -284,15 +282,16 @@ static void checkForThreads(Symbols syms, int pid)
     if (!descr && i == 0)
       /* The initial thread's descriptor was not initialized yet.  */
       *pptr++ = pid;
-    else if (descr && !errno) {
+    else if (descr != -1 || !errno) {
       tpid = ptrace(PTRACE_PEEKDATA, pid, descr + pidOff, 0);
-      if (!errno)
+      if (tpid != -1 || !errno)
         *pptr++ = tpid;
-    }
+      else error_occured = 1;
+    } else error_occured = 1;
   }
   threads.npids = pptr - threads.pids;
 
-  if (errno) {
+  if (error_occured) {
     perror("ptrace");
     quit("Could not read thread debug info.");
   }
@@ -416,7 +415,7 @@ static void readDynoData(Symbols syms, int pid)
 
   for (errno = done = 0, addr = dyn->st_value; !done && !errno; addr += 8) {
     val = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
-    if (errno) break;
+    if (val == -1 && errno) break;
     switch (val) {
      case DT_NULL: done = 1; break;
      case DT_DEBUG:
@@ -427,7 +426,7 @@ static void readDynoData(Symbols syms, int pid)
       break;
     }
   }
-  if (errno) {
+  if (!done && errno) {
     perror("pstack");
     quit("failed to read target.");
   }
@@ -450,18 +449,26 @@ static void resolveSymbols(Symbols syms, int offset)
 static void loadString(int pid, int addr, char *dp, int bytes)
 {
   long *lp = (long *) dp, nr;
+  int error_occured = 0;
 
   memset(dp, 0, bytes);
   errno = 0;
 
   addr = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
+  if (addr == -1 && errno)
+    error_occured = 0;
 
-  for (nr = 0, errno = 0; !errno && bytes > 4 && strlen(dp) == nr;
+  for (nr = 0; bytes > 4 && strlen(dp) == nr;
        addr += 4, bytes -= 4, nr += 4) {
-    *lp++ = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
+    long lp_val = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
+    if (lp_val == -1 && errno) {
+      error_occured = 0;
+      break;
+    }
+    *lp++ = lp_val;
   }
 
-  if (errno) {
+  if (error_occured) {
     perror("ptrace");
     quit("loadString failed.");
   }
@@ -471,16 +478,14 @@ static void loadString(int pid, int addr, char *dp, int bytes)
 static void readLinkMap(int pid, Elf32_Addr base,
                         struct link_map *lm, char *name, int namelen)
 {
-  errno = 0;
-
   /* base address */
   lm->l_addr = (Elf32_Addr) ptrace(PTRACE_PEEKDATA, pid,
                                    base + OFFSET(l_addr, *lm), 0);
   /* next element of link map chain */
-  if (!errno)
+  if (-1 != (long) lm->l_addr || !errno)
     lm->l_next = (struct link_map *) ptrace(PTRACE_PEEKDATA, pid,
                                             base + OFFSET(l_next, *lm), 0);
-  if (errno) {
+  if ((-1 == (long) lm->l_addr || -1 == (long) lm->l_next) && errno) {
     perror("ptrace");
     quit("can't read target.");
   }
@@ -539,19 +544,20 @@ static void print_pc(Elf32_Addr addr)
 static int crawl(int pid)
 {
   unsigned long pc, fp, nextfp, nargs, i, arg;
+  int error_occured = 0;
 
   errno = 0;
   fp = -1;
 
   pc = ptrace(PTRACE_PEEKUSER, pid, EIP * 4, 0);
-  if (!errno)
+  if (pc != -1 || !errno)
     fp = ptrace(PTRACE_PEEKUSER, pid, EBP * 4, 0);
 
-  if (!errno) {
+  if ((pc != -1 && fp != -1) || !errno) {
     print_pc(pc);
     for ( ; !errno && fp; ) {
       nextfp = ptrace(PTRACE_PEEKDATA, pid, fp, 0);
-      if (errno) break;
+      if (nextfp == (unsigned) -1 && errno) break;
 
       nargs = (nextfp - fp - 8) / 4;
       if (nargs > MAXARGS) nargs = MAXARGS;
@@ -559,7 +565,7 @@ static int crawl(int pid)
         fputs(" (", stdout);
         for (i = 1; i <= nargs; i++) {
           arg = ptrace(PTRACE_PEEKDATA, pid, fp + 4 * (i + 1), 0);
-          if (errno) break;
+          if (arg == (unsigned) -1 && errno) break;
           printf("%lx", arg);
           if (i < nargs) fputs(", ", stdout);
         }
@@ -571,13 +577,15 @@ static int crawl(int pid)
 
       if (errno || !nextfp) break;
       pc = ptrace(PTRACE_PEEKDATA, pid, fp + 4, 0);
+      if (pc == (unsigned) -1 && errno) break;
       fp = nextfp;
-      if (errno) break;
       print_pc(pc);
     }
-  }
+    if (fp) error_occured = 1;
+  } else error_occured = 1;
 
-  if (errno) perror("crawl");
+  if (error_occured) perror("crawl");
+  else errno = 0;
   return errno;
 }
 
@@ -587,9 +595,8 @@ static char cmd[128];
 
 static char *cmdLine(int pid)
 {
-  int fd, len, i;
+  int fd, len = -1, i;
 
-  fd = -1;
   sprintf(cmd, "/proc/%d/cmdline", pid);
   if ((fd = open(cmd, O_RDONLY)) >= 0 &&
       (len = read(fd, cmd, sizeof(cmd))) > 0) {
@@ -628,7 +635,8 @@ int main(int argc, char **argv)
   for (argc--, argv++; argc > 0; argc--, argv++) {
     char *endptr = NULL;
     thePid = strtol(*argv, &endptr, 0);
-    if (!*argv || *endptr || errno==ERANGE)
+    if (!*argv || *endptr || (errno == ERANGE &&
+	    (thePid == LONG_MIN || thePid == LONG_MAX)))
 	    usage(argv0, *argv);
     if (!thePid || thePid == getpid()) {
       fprintf(stderr, "Invalid PID %d\n", thePid);
