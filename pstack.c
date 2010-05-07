@@ -107,8 +107,10 @@ static int detachall(void)
   /* Now attach from the thread we initially attached to.  Note that
      the PTRACE_DETACH will continue the thread, so there is no need
      is issue a separate PTRACE_CONTINUE call.  */
-  if (-1 == ptrace(PTRACE_DETACH, thePid, 0, 0))
+  if (-1 == ptrace(PTRACE_DETACH, thePid, 0, 0)) {
+    perror("detach");
     return errno;
+  }
   return 0;
 }
 
@@ -301,7 +303,7 @@ static void checkForThreads(Symbols syms, int pid)
   for (i = 0; i < threads.npids; i++) {
     if (threads.pids[i] && threads.pids[i] != pid) {
       if (attach(threads.pids[i]) != 0)
-        printf("Could not attach to thread %d.\n", threads.pids[i]);
+        printf("Could not attach to thread %d: %s.\n", threads.pids[i], strerror(errno));
       else threads.attached[i] = 1;
     } else if (threads.pids[i] == pid) {
       threads.attached[i] = 1;
@@ -606,7 +608,7 @@ static char *cmdLine(int pid)
     cmd[len] = 0;
     if (len >= sizeof(cmd) - 4)
       strcpy(&cmd[sizeof(cmd) - 4], "...");
-  }
+  } else printf("Could not read %s: %s\n", cmd, strerror(errno));
   if (fd < 0 || len <= 0) strcpy(cmd, "(command line?)");
   if (fd >= 0) close(fd);
 
@@ -645,7 +647,7 @@ int main(int argc, char **argv)
     }
 
     if (attach(thePid) != 0) {
-      fprintf(stderr, "Could not attach to target %d\n", thePid);
+      fprintf(stderr, "Could not attach to target %d: %s.\n", thePid, strerror(errno));
     } else {
       printf("\n%d: %s\n", thePid, cmdLine(thePid));
       loadSymbols(thePid);
@@ -653,7 +655,7 @@ int main(int argc, char **argv)
         for (i = 0; i < threads.npids; i++) {
           if (threads.attached[i]) {
             printf("----- Thread %d -----\n", threads.pids[i]);
-            if (crawl(threads.pids[i]) != 0)
+            if (crawl(threads.pids[i]) != 1)
               fprintf(stderr, "Error tracing through thread %d\n",
                       threads.pids[i]);
           }
