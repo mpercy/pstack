@@ -390,7 +390,11 @@ static Symbols loadSyms(const char *fname)
 
   syms = newSyms(fname);
   if ((fd = open(fname, O_RDONLY)) < 0)
+  {
+    fprintf(stderr, "'%s': ", fname);
+    perror("opening object file");
     quit("Could not open object file.");
+  }
   read(fd, &hdr, sizeof(hdr));
   verify_ident(&hdr);
   if (!find_stables(&hdr, fd, syms)) {
@@ -599,9 +603,17 @@ static char *cmdLine(int pid)
   return cmd;
 }
 
+void usage(const char *argv0, const char *param)
+{
+	fprintf(stderr, "Invalid parameter '%s'.\n", param);
+	fprintf(stderr, "Usage: %s <pid> [one or more]\n", argv0);
+	exit(1);
+}
+
 int main(int argc, char **argv)
 {
   int i;
+  const char *argv0 = argv[0];
 
   /* Arrange to detach if we get an unexpected signal.  This prevents
      threads from being left in a suspended state if (for example) we
@@ -612,15 +624,17 @@ int main(int argc, char **argv)
       signal (i, handle_signal);
 
   for (argc--, argv++; argc > 0; argc--, argv++) {
-    thePid = atoi(*argv);
+    char *endptr = NULL;
+    thePid = strtol(*argv, &endptr, 0);
+    if (!*argv || *endptr || errno==ERANGE)
+	    usage(argv0, *argv);
     if (!thePid || thePid == getpid()) {
       fprintf(stderr, "Invalid PID %d\n", thePid);
       continue;
     }
 
     if (attach(thePid) != 0) {
-      thePid = 0;
-      fprintf(stderr, "Could not attach to target.\n");
+      fprintf(stderr, "Could not attach to target %d\n", thePid);
     } else {
       printf("\n%d: %s\n", thePid, cmdLine(thePid));
       loadSymbols(thePid);
