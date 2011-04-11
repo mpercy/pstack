@@ -35,11 +35,14 @@
    make sure that the symbol "__pthread_threads_debug" is defined.)
 */
 
+#define __ASSEMBLY__
+
 #include <sys/ptrace.h>
 #include <asm/ptrace.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/user.h>
 
 #include <fcntl.h>
 #include <link.h>
@@ -51,17 +54,47 @@
 #include <errno.h>
 #include <limits.h>
 
-static int thePid; /* pid requested by caller. */
+#if __WORDSIZE == 64
+#define uintN_t uint64_t
+#define ElfN_Ehdr Elf64_Ehdr
+#define ElfN_Shdr Elf64_Shdr
+#define ElfN_Addr Elf64_Addr
+#define ElfN_Sym Elf64_Sym
+#define ElfN_Dyn Elf64_Dyn
+#define ELFCLASSN ELFCLASS64
+#define ELFN_ST_TYPE ELF64_ST_TYPE
+#define INT_RANGE_STR "64"
+#else
+#define uintN_t uint32_t
+#define ElfN_Ehdr Elf32_Ehdr
+#define ElfN_Shdr Elf32_Shdr
+#define ElfN_Addr Elf32_Addr
+#define ElfN_Sym Elf32_Sym
+#define ElfN_Dyn Elf32_Dyn
+#define ELFCLASSN ELFCLASS32
+#define ELFN_ST_TYPE ELF32_ST_TYPE
+#define INT_RANGE_STR "32"
+#endif
+
+#ifdef __ORDER_LITTLE_ENDIAN__
+#define ELF_EI_DATA ELFDATA2LSB
+#define ELF_ENDIANNESS_ERRSTR "big"
+#else
+#define ELF_EI_DATA ELFDATA2MSB
+#define ELF_ENDIANNESS_ERRSTR "little"
+#endif
+
+static pid_t thePid; /* pid requested by caller. */
 static struct {
   int found;
-  int *pids; /* pid[0] is dad, pid[1] is manager */
+  pid_t *pids; /* pid[0] is dad, pid[1] is manager */
   int *attached; /* pid[i] is attached? 1 = yes, 0 = no */
   int npids;
 } threads;
 
 /* ------------------------------ */
 
-static int attach(int pid)
+static int attach(pid_t pid)
 {
   int status;
 
@@ -73,7 +106,7 @@ static int attach(int pid)
      flag.  Note we loop as the the PID we get back may not be
      one we care about.  */
   if (-1 == waitpid(pid, &status, WUNTRACED) && errno == ECHILD) {
-    int x;
+    pid_t x;
 
     while (1) {
       x = waitpid (-1, &status, (__WCLONE));
@@ -132,17 +165,17 @@ static void quit(char *msg)
 
 /* ------------------------------ */
 
-static Elf32_Addr DebugInfo;
+static ElfN_Addr DebugInfo;
 
 typedef struct _t_Symbols {
   struct _t_Symbols *next;
   char *name;
-  Elf32_Sym *symbols;
+  ElfN_Sym *symbols;
   int nsyms;
   char *strings;
   int strslen, noffsets;
-  Elf32_Addr baseAddr;
-  Elf32_Dyn *dynamic;
+  ElfN_Addr baseAddr;
+  ElfN_Dyn *dynamic;
   int ndyns;
 } *Symbols;
 
@@ -176,9 +209,9 @@ static void deleteSyms(Symbols syms)
   free(syms);
 }
 
-static const Elf32_Sym *lookupSymInTable(const char *name, Symbols syms)
+static const ElfN_Sym *lookupSymInTable(const char *name, Symbols syms)
 {
-  Elf32_Sym *sym;
+  ElfN_Sym *sym;
   int i;
 
   for (i = 0, sym = syms->symbols; i < syms->nsyms; i++, sym++) {
@@ -189,19 +222,19 @@ static const Elf32_Sym *lookupSymInTable(const char *name, Symbols syms)
   return 0;
 }
 
-static void findCodeAddress(Elf32_Addr addr, Elf32_Sym **ans,
+static void findCodeAddress(ElfN_Addr addr, ElfN_Sym **ans,
                             Symbols *symtab)
 {
-  Elf32_Sym *sym;
+  ElfN_Sym *sym;
   Symbols tab;
-  int i;
+  uintN_t i;
 
   for (tab = allSyms, *ans = 0, *symtab = 0; tab; tab = tab->next) {
     if (addr < tab->baseAddr) continue;
     for (sym = tab->symbols, i = 0; i < tab->nsyms; i++, sym++) {
       if (sym->st_value <= addr && sym->st_shndx != SHN_UNDEF &&
           sym->st_shndx < tab->noffsets &&
-          ELF32_ST_TYPE(sym->st_info) == STT_FUNC &&
+          ELFN_ST_TYPE(sym->st_info) == STT_FUNC &&
           (!*ans || (*ans)->st_value < sym->st_value))
         *ans = sym, *symtab = tab;
     }
@@ -228,9 +261,9 @@ static void resetData(void)
 
 /* ------------------------------ */
 
-static const Elf32_Sym *findLocalSym(const char *name, Symbols syms)
+static const ElfN_Sym *findLocalSym(const char *name, Symbols syms)
 {
-  const Elf32_Sym *sym = lookupSymInTable(name, syms);
+  const ElfN_Sym *sym = lookupSymInTable(name, syms);
 
   return (!sym || sym->st_shndx == SHN_UNDEF ||
           sym->st_shndx >= syms->noffsets) ? 0 : sym;
@@ -238,7 +271,7 @@ static const Elf32_Sym *findLocalSym(const char *name, Symbols syms)
 
 static int readSym(Symbols syms, int pid, const char *name, int *val)
 {
-  const Elf32_Sym *sym;
+  const ElfN_Sym *sym;
 
   if (!(sym = findLocalSym(name, syms))) return 0;
   errno = 0;
@@ -252,10 +285,10 @@ static int readSym(Symbols syms, int pid, const char *name, int *val)
 
 static void checkForThreads(Symbols syms, int pid)
 {
-  const Elf32_Sym *handles;
+  const ElfN_Sym *handles;
   int i, tpid, hsize, descOff, pidOff, numPids, *pptr;
   int error_occured = 0;
-  Elf32_Addr descr;
+  ElfN_Addr descr;
 
   if (!findLocalSym("__pthread_threads_debug", syms) ||
       !(handles = findLocalSym("__pthread_handles", syms)) ||
@@ -314,25 +347,25 @@ static void checkForThreads(Symbols syms, int pid)
 
 /* ------------------------------ */
 
-static void verify_ident(Elf32_Ehdr *hdr)
+static void verify_ident(ElfN_Ehdr *hdr)
 {
   if (memcmp(&hdr->e_ident[EI_MAG0], ELFMAG, SELFMAG))
     quit("Bad magic number.");
-  if (hdr->e_ident[EI_CLASS] != ELFCLASS32)
-    quit("only 32 bit objects supported.");
-  if (hdr->e_ident[EI_DATA] != ELFDATA2LSB)
-    quit("big endian object files not supported.");
+  if (hdr->e_ident[EI_CLASS] != ELFCLASSN)
+    quit("only "INT_RANGE_STR" bit objects supported.");
+  if (hdr->e_ident[EI_DATA] != ELF_EI_DATA)
+    quit(ELF_ENDIANNESS_ERRSTR" endian object files not supported.");
   if (hdr->e_ident[EI_VERSION] != EV_CURRENT ||
       hdr->e_version != EV_CURRENT)
     quit("Unsupported ELF format version.");
-  if (hdr->e_machine != EM_386)
+  if ((hdr->e_machine != EM_386) && (hdr->e_machine != EM_X86_64))
     quit("Not an IA32 executable.");
 }
 
-static int find_stables(Elf32_Ehdr *hdr, int fd, Symbols syms)
+static int find_stables(ElfN_Ehdr *hdr, int fd, Symbols syms)
 {
   int i, idx, spot;
-  Elf32_Shdr shdr;
+  ElfN_Shdr shdr;
 
   spot = hdr->e_shoff;
   if (lseek(fd, spot, SEEK_SET) != spot) quit("seek failed.");
@@ -347,9 +380,9 @@ static int find_stables(Elf32_Ehdr *hdr, int fd, Symbols syms)
     spot += hdr->e_shentsize;
     switch (shdr.sh_type) {
      case SHT_SYMTAB:
-      syms->nsyms = shdr.sh_size / sizeof(Elf32_Sym);
+      syms->nsyms = shdr.sh_size / sizeof(ElfN_Sym);
 
-      if (!(syms->symbols = (Elf32_Sym *) malloc(shdr.sh_size)))
+      if (!(syms->symbols = (ElfN_Sym *) malloc(shdr.sh_size)))
         quit("Could not allocate symbol table.");
 
       if (lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
@@ -369,8 +402,8 @@ static int find_stables(Elf32_Ehdr *hdr, int fd, Symbols syms)
       lseek(fd, spot, SEEK_SET);
       break;
      case SHT_DYNAMIC:
-      syms->ndyns = shdr.sh_size / sizeof(Elf32_Dyn);
-      if (!(syms->dynamic = (Elf32_Dyn *) malloc(shdr.sh_size)))
+      syms->ndyns = shdr.sh_size / sizeof(ElfN_Dyn);
+      if (!(syms->dynamic = (ElfN_Dyn *) malloc(shdr.sh_size)))
         quit("Out of memory.");
       if (lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
           read(fd, syms->dynamic, shdr.sh_size) != shdr.sh_size)
@@ -385,7 +418,7 @@ static int find_stables(Elf32_Ehdr *hdr, int fd, Symbols syms)
 
 static Symbols loadSyms(const char *fname)
 {
-  Elf32_Ehdr hdr;
+  ElfN_Ehdr hdr;
   int fd;
   Symbols syms;
 
@@ -411,21 +444,28 @@ static Symbols loadSyms(const char *fname)
 
 static void readDynoData(Symbols syms, int pid)
 {
-  int val, done;
-  Elf32_Addr addr;
-  const Elf32_Sym *dyn = lookupSymInTable("_DYNAMIC", syms);
+  int done;
+  long val;
+  ElfN_Dyn dyn_elem;
+  ElfN_Addr addr;
+  const ElfN_Sym *dyn = lookupSymInTable("_DYNAMIC", syms);
 
   if (!dyn) quit("could not find _DYNAMIC symbol");
-  for (errno = done = 0, addr = dyn->st_value; !done && !errno; addr += 8) {
+  for (errno = done = 0, addr = dyn->st_value; !done && !errno;
+       addr += sizeof dyn_elem) {
     val = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
     if (val == -1 && errno) break;
+    dyn_elem.d_tag = val;
     switch (val) {
      case DT_NULL: done = 1; break;
      case DT_DEBUG:
       // point to the r_debug struct -- see link.h
-      DebugInfo = (Elf32_Addr) ptrace(PTRACE_PEEKDATA, pid, addr + 4, 0);
+      dyn_elem.d_un.d_ptr = (ElfN_Addr) ptrace(PTRACE_PEEKDATA, pid,
+                  addr + sizeof(dyn_elem.d_tag), 0);
+      DebugInfo = dyn_elem.d_un.d_ptr + offsetof(struct r_debug,r_map);
       // point to the head of the link_map chain.
-      DebugInfo = (Elf32_Addr) ptrace(PTRACE_PEEKDATA, pid, DebugInfo + 4, 0);
+      DebugInfo = (ElfN_Addr) ptrace(PTRACE_PEEKDATA, pid,
+                  DebugInfo, 0);
       break;
     }
   }
@@ -437,7 +477,7 @@ static void readDynoData(Symbols syms, int pid)
 
 static void resolveSymbols(Symbols syms, int offset)
 {
-  Elf32_Sym *sym;
+  ElfN_Sym *sym;
   int i;
 
   syms->baseAddr = offset;
@@ -449,7 +489,7 @@ static void resolveSymbols(Symbols syms, int offset)
   }
 }
 
-static void loadString(int pid, int addr, char *dp, int bytes)
+static void loadString(pid_t pid, ElfN_Addr addr, char *dp, int bytes)
 {
   long *lp = (long *) dp, nr;
   int error_occured = 0;
@@ -461,8 +501,8 @@ static void loadString(int pid, int addr, char *dp, int bytes)
   if (addr == -1 && errno)
     error_occured = 0;
 
-  for (nr = 0; bytes > 4 && strlen(dp) == nr;
-       addr += 4, bytes -= 4, nr += 4) {
+  for (nr = 0; bytes > sizeof(long) && strlen(dp) == nr;
+       addr += sizeof(long), bytes -= sizeof(long), nr += sizeof(long)) {
     long lp_val = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
     if (lp_val == -1 && errno) {
       error_occured = 0;
@@ -477,23 +517,22 @@ static void loadString(int pid, int addr, char *dp, int bytes)
   }
 }
 
-#define OFFSET(f, s) ((int) ((char *) &(s).f - (char *) &(s)))
-static void readLinkMap(int pid, Elf32_Addr base,
+static void readLinkMap(int pid, ElfN_Addr base,
                         struct link_map *lm, char *name, int namelen)
 {
   /* base address */
-  lm->l_addr = (Elf32_Addr) ptrace(PTRACE_PEEKDATA, pid,
-                                   base + OFFSET(l_addr, *lm), 0);
+  lm->l_addr = (ElfN_Addr) ptrace(PTRACE_PEEKDATA, pid,
+                                   base + offsetof(struct link_map,l_addr), 0);
   /* next element of link map chain */
   if (-1 != (long) lm->l_addr || !errno)
     lm->l_next = (struct link_map *) ptrace(PTRACE_PEEKDATA, pid,
-                                            base + OFFSET(l_next, *lm), 0);
+                                            base + offsetof(struct link_map, l_next), 0);
   if ((-1 == (long) lm->l_addr || -1 == (long) lm->l_next) && errno) {
     perror("ptrace");
     quit("can't read target.");
   }
 
-  loadString(pid, base + OFFSET(l_name, *lm), name, namelen);
+  loadString(pid, base + offsetof(struct link_map, l_name), name, namelen);
 }
 
 static void loadSymbols(int pid)
@@ -512,7 +551,7 @@ static void loadSymbols(int pid)
   readLinkMap(pid, DebugInfo, &lm, buf, sizeof(buf));
 
   for ( ; lm.l_next; ) {
-    readLinkMap(pid, (Elf32_Addr) lm.l_next, &lm, buf, sizeof(buf));
+    readLinkMap(pid, (ElfN_Addr) lm.l_next, &lm, buf, sizeof(buf));
     if (!(syms = loadSyms(buf))) {
 	printf("(No symbols found in %s)\n", buf);
 	continue;
@@ -524,9 +563,9 @@ static void loadSymbols(int pid)
 
 /* ------------------------------ */
 
-static void print_pc(Elf32_Addr addr)
+static void print_pc(ElfN_Addr addr)
 {
-  Elf32_Sym *sym;
+  ElfN_Sym *sym;
   Symbols syms;
 
   findCodeAddress(addr, &sym, &syms);
@@ -534,7 +573,7 @@ static void print_pc(Elf32_Addr addr)
   if (!sym)
     printf("0x%08lx: ????", (unsigned long) addr);
   else if (sym->st_value < addr)
-    printf("0x%08lx: %s + 0x%x", (unsigned long) addr,
+    printf("0x%08lx: %s + 0x%tx", (unsigned long) addr,
 	   &syms->strings[sym->st_name], addr - sym->st_value);
   else
     printf("0x%08lx: %s", (unsigned long) addr, &syms->strings[sym->st_name]);
@@ -547,14 +586,26 @@ static void print_pc(Elf32_Addr addr)
 static int crawl(int pid)
 {
   unsigned long pc, fp, nextfp, nargs, i, arg;
-  int error_occured = 0;
+  int ret, error_occured = 0;
+  struct user_regs_struct regs;
 
   errno = 0;
   fp = -1;
 
-  pc = ptrace(PTRACE_PEEKUSER, pid, EIP * 4, 0);
-  if (pc != -1 || !errno)
-    fp = ptrace(PTRACE_PEEKUSER, pid, EBP * 4, 0);
+  ret = ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+  if (ret != -1 && !errno) {
+#if defined(__i386__)
+    pc = regs.eip;
+    fp = regs.ebp;
+#elif defined(__x86_64__)
+    pc = regs.rip;
+    fp = regs.rbp;
+#elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__) || defined(__ARMEL__)
+#error Not (yet) supported architecture, patches welcomes :-)
+#else
+#error Not (yet) recognized architecture, patches welcomes :-)
+#endif
+  }
 
   if ((pc != -1 && fp != -1) || !errno) {
     print_pc(pc);
@@ -562,24 +613,26 @@ static int crawl(int pid)
       nextfp = ptrace(PTRACE_PEEKDATA, pid, fp, 0);
       if (nextfp == (unsigned) -1 && errno) break;
 
-      nargs = (nextfp - fp - 8) / 4;
+      nargs = (nextfp - fp - (2 * __SIZEOF_POINTER__)) / __SIZEOF_POINTER__;
       if (nargs > MAXARGS) nargs = MAXARGS;
       if (nargs > 0) {
         fputs(" (", stdout);
         for (i = 1; i <= nargs; i++) {
-          arg = ptrace(PTRACE_PEEKDATA, pid, fp + 4 * (i + 1), 0);
+          arg = ptrace(PTRACE_PEEKDATA, pid, fp + __SIZEOF_POINTER__ * (i + 1),
+                       0);
           if (arg == (unsigned) -1 && errno) break;
           printf("%lx", arg);
           if (i < nargs) fputs(", ", stdout);
         }
         fputc(')', stdout);
-        nargs = nextfp - fp - 8 - (4 * nargs);
+        nargs = nextfp - fp - (2 * __SIZEOF_POINTER__) -
+                (__SIZEOF_POINTER__ * nargs);
         if (!errno && nargs > 0) printf(" + %lx\n", nargs);
         else fputc('\n', stdout);
       } else fputc('\n', stdout);
 
       if (errno || !nextfp) break;
-      pc = ptrace(PTRACE_PEEKDATA, pid, fp + 4, 0);
+      pc = ptrace(PTRACE_PEEKDATA, pid, fp + __SIZEOF_POINTER__, 0);
       if (pc == (unsigned) -1 && errno) break;
       fp = nextfp;
       print_pc(pc);
