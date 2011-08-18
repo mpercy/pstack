@@ -1,0 +1,38 @@
+pstack - print stack trace of running processes
+
+pstack dumps a stack trace for a process, given the pid of that
+process.  If the process named is part of a thread group, then all the threads
+inthe group are traced.  See the man page for more information.
+
+This program was inspired by the 'pstack' program available on Solaris.
+
+SUPPORTED PLATFORMS:
+	This program runs on 32 bit x86 machines, using ELF binaries
+generated from GNU compilers.  If threads are being used, it depends
+on a debuggable version of the pthreads library to find the threads in
+the thread group.  If anyone wants to port this to other
+architectures, please let me know about questions you may have, or
+achievements you have made.  I'd like to incorporate such changes into
+my version of the code.
+
+FEATURES:
+	symbolic address dumping
+  thread group support
+
+BUILD:
+   make
+
+INSTALL:
+	 make install
+
+UNINSTALL:
+   make uninstall
+
+NOTE: you must be root to [un]install.  pstack will run fine from any
+directory, install just puts the binary and man page in 'normal'
+places (/usr/local/...)
+
+USAGE:
+	pstack pid [...]
+
+See the man page for more details.
