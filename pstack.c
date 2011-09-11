@@ -35,8 +35,6 @@
    make sure that the symbol "__pthread_threads_debug" is defined.)
 */
 
-#define __ASSEMBLY__
-
 #include <sys/ptrace.h>
 #include <asm/ptrace.h>
 #include <sys/types.h>
