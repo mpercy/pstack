@@ -643,19 +643,23 @@ static int crawl(int pid)
   struct pt_regs regs;
 
   errno = 0;
-  fp = -1;
 
   ret = ptrace(PTRACE_GETREGS, pid, NULL, &regs);
   if (ret != -1 && !errno) {
     pc = PROGRAM_COUNTER(regs);
     fp = FRAME_POINTER(regs);
   }
+  else
+    error_occured = 1;
 
-  if ((pc != -1 && fp != -1) || !errno) {
+  if (!error_occured) {
     print_pc(pc);
-    for ( ; !errno && fp; ) {
+    for ( ; !error_occured && fp; ) {
       nextfp = ptrace(PTRACE_PEEKDATA, pid, NEXT_FRAME_POINTER_ADDR(fp), 0);
-      if (nextfp == (unsigned) -1 && errno) break;
+      if (nextfp == (unsigned) -1 && errno) {
+        error_occured = 1;
+        break;
+      }
 
       nargs = NB_ARGS(fp, nextfp);
       if (nargs > MAXARGS) nargs = MAXARGS;
@@ -663,24 +667,29 @@ static int crawl(int pid)
         fputs(" (", stdout);
         for (i = 1; i <= nargs; i++) {
           arg = ptrace(PTRACE_PEEKDATA, pid, ARG_NMBR(fp,i), 0);
-          if (arg == (unsigned) -1 && errno) break;
+          if (arg == (unsigned) -1 && errno) {
+            error_occured = 1;
+            break;
+          }
           printf("%lx", arg);
           if (i < nargs) fputs(", ", stdout);
         }
         fputc(')', stdout);
 	nargs = NB_ARGS_REMAINING(fp, nextfp, nargs);
-        if (!errno && nargs > 0) printf(" + %lx\n", nargs);
+        if (!error_occured && nargs > 0) printf(" + %lx\n", nargs);
         else fputc('\n', stdout);
       } else fputc('\n', stdout);
 
-      if (errno || !nextfp) break;
+      if (error_occured || !nextfp) break;
       pc = ptrace(PTRACE_PEEKDATA, pid, NEXT_PROGRAM_COUNTER_ADDR(fp), 0);
-      if (pc == (unsigned) -1 && errno) break;
+      if (pc == (unsigned) -1 && errno) {
+        error_occured = 1;
+        break;
+      }
       fp = nextfp;
       print_pc(pc);
     }
-    if (fp) error_occured = 1;
-  } else error_occured = 1;
+  }
 
   if (error_occured) perror("crawl");
   else errno = 0;
