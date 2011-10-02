@@ -52,6 +52,13 @@
 #include <errno.h>
 #include <limits.h>
 
+
+
+/*************************************
+ *    Architecture dependant code    *
+ *************************************/
+
+/* Word size */
 #if __WORDSIZE == 64
 #define uintN_t uint64_t
 #define ElfN_Ehdr Elf64_Ehdr
@@ -74,6 +81,7 @@
 #define INT_RANGE_STR "32"
 #endif
 
+/* Endianness */
 #ifdef __ORDER_LITTLE_ENDIAN__
 #define ELF_EI_DATA ELFDATA2LSB
 #define ELF_ENDIANNESS_ERRSTR "big"
@@ -81,6 +89,38 @@
 #define ELF_EI_DATA ELFDATA2MSB
 #define ELF_ENDIANNESS_ERRSTR "little"
 #endif
+
+/* Machine dependant: ELF machine name, registers name and stack layout */
+#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) /* x86-32 */
+#define ELF_MACHINE EM_386
+#define PROGRAM_COUNTER(regs) (regs.eip)
+#define FRAME_POINTER(regs) (regs.ebp)
+#else /* x86-64 */
+#define ELF_MACHINE EM_X86_64
+#define PROGRAM_COUNTER(regs) (regs.rip)
+#define FRAME_POINTER(regs) (regs.rbp)
+#endif /* x86-{32,64} */
+#define NEXT_FRAME_POINTER_ADDR(fp) (fp)
+#define NEXT_PROGRAM_COUNTER_ADDR(fp) ((fp) + __SIZEOF_POINTER__)
+#elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__) || defined(__ARMEL__)
+#error Not (yet) supported architecture, patches welcomes :-)
+#else
+#error Not (yet) recognized architecture, patches welcomes :-)
+#endif
+
+#define NB_ARGS(fp, nextfp) \
+	(((nextfp) - (fp) - (2 * __SIZEOF_POINTER__)) / __SIZEOF_POINTER__)
+#define ARG_NMBR(fp, i) ((fp) + __SIZEOF_POINTER__ * ((i) + 1))
+#define NB_ARGS_REMAINING(fp, nextfp, nargs) \
+	((nextfp) - (fp) - (2 * __SIZEOF_POINTER__) - \
+	(__SIZEOF_POINTER__ * nargs))
+
+
+
+/***************************************
+ *    Architecture independant code    *
+ ***************************************/
 
 static pid_t thePid; /* pid requested by caller. */
 static struct {
@@ -356,7 +396,7 @@ static void verify_ident(ElfN_Ehdr *hdr)
   if (hdr->e_ident[EI_VERSION] != EV_CURRENT ||
       hdr->e_version != EV_CURRENT)
     quit("Unsupported ELF format version.");
-  if ((hdr->e_machine != EM_386) && (hdr->e_machine != EM_X86_64))
+  if (hdr->e_machine != ELF_MACHINE)
     quit("Not an IA32 executable.");
 }
 
@@ -592,45 +632,34 @@ static int crawl(int pid)
 
   ret = ptrace(PTRACE_GETREGS, pid, NULL, &regs);
   if (ret != -1 && !errno) {
-#if defined(__i386__)
-    pc = regs.eip;
-    fp = regs.ebp;
-#elif defined(__x86_64__)
-    pc = regs.rip;
-    fp = regs.rbp;
-#elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__) || defined(__ARMEL__)
-#error Not (yet) supported architecture, patches welcomes :-)
-#else
-#error Not (yet) recognized architecture, patches welcomes :-)
-#endif
+    pc = PROGRAM_COUNTER(regs);
+    fp = FRAME_POINTER(regs);
   }
 
   if ((pc != -1 && fp != -1) || !errno) {
     print_pc(pc);
     for ( ; !errno && fp; ) {
-      nextfp = ptrace(PTRACE_PEEKDATA, pid, fp, 0);
+      nextfp = ptrace(PTRACE_PEEKDATA, pid, NEXT_FRAME_POINTER_ADDR(fp), 0);
       if (nextfp == (unsigned) -1 && errno) break;
 
-      nargs = (nextfp - fp - (2 * __SIZEOF_POINTER__)) / __SIZEOF_POINTER__;
+      nargs = NB_ARGS(fp, nextfp);
       if (nargs > MAXARGS) nargs = MAXARGS;
       if (nargs > 0) {
         fputs(" (", stdout);
         for (i = 1; i <= nargs; i++) {
-          arg = ptrace(PTRACE_PEEKDATA, pid, fp + __SIZEOF_POINTER__ * (i + 1),
-                       0);
+          arg = ptrace(PTRACE_PEEKDATA, pid, ARG_NMBR(fp,i), 0);
           if (arg == (unsigned) -1 && errno) break;
           printf("%lx", arg);
           if (i < nargs) fputs(", ", stdout);
         }
         fputc(')', stdout);
-        nargs = nextfp - fp - (2 * __SIZEOF_POINTER__) -
-                (__SIZEOF_POINTER__ * nargs);
+	nargs = NB_ARGS_REMAINING(fp, nextfp, nargs);
         if (!errno && nargs > 0) printf(" + %lx\n", nargs);
         else fputc('\n', stdout);
       } else fputc('\n', stdout);
 
       if (errno || !nextfp) break;
-      pc = ptrace(PTRACE_PEEKDATA, pid, fp + __SIZEOF_POINTER__, 0);
+      pc = ptrace(PTRACE_PEEKDATA, pid, NEXT_PROGRAM_COUNTER_ADDR(fp), 0);
       if (pc == (unsigned) -1 && errno) break;
       fp = nextfp;
       print_pc(pc);
