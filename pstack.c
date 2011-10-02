@@ -103,7 +103,13 @@
 #endif /* x86-{32,64} */
 #define NEXT_FRAME_POINTER_ADDR(fp) (fp)
 #define NEXT_PROGRAM_COUNTER_ADDR(fp) ((fp) + __SIZEOF_POINTER__)
-#elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__) || defined(__ARMEL__)
+#elif defined(__ARMEL__) /* armel */
+#define ELF_MACHINE EM_ARM
+#define PROGRAM_COUNTER(regs) (regs.ARM_pc)
+#define FRAME_POINTER(regs) (regs.ARM_fp)
+#define NEXT_FRAME_POINTER_ADDR(fp) ((fp) - __SIZEOF_POINTER__)
+#define NEXT_PROGRAM_COUNTER_ADDR(fp) (fp)
+#elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__)
 #error Not (yet) supported architecture, patches welcomes :-)
 #else
 #error Not (yet) recognized architecture, patches welcomes :-)
@@ -625,7 +631,7 @@ static int crawl(int pid)
 {
   unsigned long pc, fp, nextfp, nargs, i, arg;
   int ret, error_occured = 0;
-  struct user_regs_struct regs;
+  struct pt_regs regs;
 
   errno = 0;
   fp = -1;
