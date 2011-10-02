@@ -85,9 +85,18 @@
 #ifdef __ORDER_LITTLE_ENDIAN__
 #define ELF_EI_DATA ELFDATA2LSB
 #define ELF_ENDIANNESS_ERRSTR "big"
+#elif defined(__ORDER_BIG_ENDIAN__)
+#define ELF_EI_DATA ELFDATA2MSB
+#define ELF_ENDIANNESS_ERRSTR "little"
+#else
+#include <endian.h>
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#define ELF_EI_DATA ELFDATA2LSB
+#define ELF_ENDIANNESS_ERRSTR "big"
 #else
 #define ELF_EI_DATA ELFDATA2MSB
 #define ELF_ENDIANNESS_ERRSTR "little"
+#endif
 #endif
 
 /* Machine dependant: ELF machine name, registers name and stack layout */
