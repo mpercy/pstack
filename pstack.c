@@ -645,7 +645,7 @@ static int crawl(int pid)
   errno = 0;
 
   ret = ptrace(PTRACE_GETREGS, pid, NULL, &regs);
-  if (ret != -1 && !errno) {
+  if (ret != -1) {
     pc = PROGRAM_COUNTER(regs);
     fp = FRAME_POINTER(regs);
   }
@@ -656,7 +656,7 @@ static int crawl(int pid)
     print_pc(pc);
     for ( ; !error_occured && fp; ) {
       nextfp = ptrace(PTRACE_PEEKDATA, pid, NEXT_FRAME_POINTER_ADDR(fp), 0);
-      if (nextfp == (unsigned) -1 && errno) {
+      if (nextfp == (unsigned long) -1 && errno) {
         error_occured = 1;
         break;
       }
@@ -667,7 +667,7 @@ static int crawl(int pid)
         fputs(" (", stdout);
         for (i = 1; i <= nargs; i++) {
           arg = ptrace(PTRACE_PEEKDATA, pid, ARG_NMBR(fp,i), 0);
-          if (arg == (unsigned) -1 && errno) {
+          if (arg == (unsigned long) -1 && errno) {
             error_occured = 1;
             break;
           }
@@ -682,7 +682,7 @@ static int crawl(int pid)
 
       if (error_occured || !nextfp) break;
       pc = ptrace(PTRACE_PEEKDATA, pid, NEXT_PROGRAM_COUNTER_ADDR(fp), 0);
-      if (pc == (unsigned) -1 && errno) {
+      if (pc == (unsigned long) -1 && errno) {
         error_occured = 1;
         break;
       }
@@ -729,6 +729,7 @@ void usage(const char *argv0, const char *param)
 int main(int argc, char **argv)
 {
   int i;
+  long thePidTmp;
   const char *argv0 = argv[0];
 
   /* Arrange to detach if we get an unexpected signal.  This prevents
@@ -741,10 +742,11 @@ int main(int argc, char **argv)
 
   for (argc--, argv++; argc > 0; argc--, argv++) {
     char *endptr = NULL;
-    thePid = strtol(*argv, &endptr, 0);
+    thePidTmp = strtol(*argv, &endptr, 0);
     if (!*argv || *endptr || (errno == ERANGE &&
-	    (thePid == LONG_MIN || thePid == LONG_MAX)))
+	    (thePidTmp == LONG_MIN || thePidTmp == LONG_MAX)))
 	    usage(argv0, *argv);
+    thePid = thePidTmp;
     if (!thePid || thePid == getpid()) {
       fprintf(stderr, "Invalid PID %d\n", thePid);
       continue;
