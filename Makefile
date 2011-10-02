@@ -14,9 +14,7 @@
 # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 #
 
-VERSION = $(shell awk '/Version:/ { print $$2 }' pstack.spec)
-CVSTAG = r$(subst .,-,$(VERSION))
-
+VERSION = $(shell awk 'END { print $$1 }' VERSION)
 CFLAGS = -Wall -DVERSION=\"$(VERSION)\" $(RPM_OPT_FLAGS)
 
 ifeq ($(RPM_OPT_FLAGS),)
