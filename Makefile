@@ -39,14 +39,13 @@ install : pstack
 	mkdir -p "$(MANDIR)/man1"
 	install -m 644 man1/pstack.1 "$(MANDIR)/man1"
 
-cvstag:
-	cvs tag -F $(CVSTAG) .
+gittag:
+	git tag -s pstack-$(VERSION)
 
-archive: cvstag
-	@rm -rf /tmp/pstack-$(VERSION) /tmp/pstack
-	@cd /tmp; cvs export -r$(CVSTAG) pstack; mv pstack pstack-$(VERSION)
-	@cd /tmp; tar czSpf pstack-$(VERSION).tar.gz pstack-$(VERSION)
-	@rm -rf /tmp/pstack-$(VERSION)
+archive: gittag
+	@rm -rf /tmp/pstack-$(VERSION).tar.gz
+	@git archive -o /tmp/pstack-$(VERSION).tar --prefix=pstack-$(VERSION)/ pstack-$(VERSION)
+	@cd /tmp; gzip -9 pstack-$(VERSION).tar
 	@cp /tmp/pstack-$(VERSION).tar.gz .
-	@echo " "
+	@echo ""
 	@echo "The final archive is ./pstack-$(VERSION).tar.gz."
