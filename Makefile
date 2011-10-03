@@ -15,12 +15,8 @@
 #
 
 VERSION = $(shell awk 'END { print $$1 }' VERSION)
-CFLAGS = -Wall -Wextra -DVERSION=\"$(VERSION)\" $(RPM_OPT_FLAGS)
+CFLAGS = -Wall -Wextra -DVERSION=\"$(VERSION)\"
 
-ifeq ($(RPM_OPT_FLAGS),)
-CFLAGS += -g
-LDFLAGS += -g
-endif
 
 pstack : pstack.c
 	$(CC) $(CFLAGS) -o pstack pstack.c
