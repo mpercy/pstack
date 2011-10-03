@@ -15,7 +15,8 @@
 #
 
 VERSION = $(shell awk 'END { print $$1 }' VERSION)
-CFLAGS = -Wall -Wextra -DVERSION=\"$(VERSION)\"
+CFLAGS ?= -Wall -Wextra
+CFLAGS += -DVERSION=\"$(VERSION)\"
 
 
 pstack : pstack.c
