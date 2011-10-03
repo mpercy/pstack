@@ -15,7 +15,7 @@
 #
 
 VERSION = $(shell awk 'END { print $$1 }' VERSION)
-CFLAGS = -Wall -DVERSION=\"$(VERSION)\" $(RPM_OPT_FLAGS)
+CFLAGS = -Wall -Wextra -DVERSION=\"$(VERSION)\" $(RPM_OPT_FLAGS)
 
 ifeq ($(RPM_OPT_FLAGS),)
 CFLAGS += -g

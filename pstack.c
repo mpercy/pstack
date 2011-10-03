@@ -66,6 +66,7 @@
 #define ElfN_Addr Elf64_Addr
 #define ElfN_Sym Elf64_Sym
 #define ElfN_Dyn Elf64_Dyn
+#define ElfN_Off Elf64_Off
 #define ELFCLASSN ELFCLASS64
 #define ELFN_ST_TYPE ELF64_ST_TYPE
 #define INT_RANGE_STR "64"
@@ -76,6 +77,7 @@
 #define ElfN_Addr Elf32_Addr
 #define ElfN_Sym Elf32_Sym
 #define ElfN_Dyn Elf32_Dyn
+#define ElfN_Off Elf32_Off
 #define ELFCLASSN ELFCLASS32
 #define ELFN_ST_TYPE ELF32_ST_TYPE
 #define INT_RANGE_STR "32"
@@ -280,7 +282,7 @@ static void findCodeAddress(ElfN_Addr addr, ElfN_Sym **ans,
 {
   ElfN_Sym *sym;
   Symbols tab;
-  uintN_t i;
+  int i;
 
   for (tab = allSyms, *ans = 0, *symtab = 0; tab; tab = tab->next) {
     if (addr < tab->baseAddr) continue;
@@ -370,7 +372,7 @@ static void checkForThreads(Symbols syms, int pid)
     if (!descr && i == 0)
       /* The initial thread's descriptor was not initialized yet.  */
       *pptr++ = pid;
-    else if (descr != -1 || !errno) {
+    else if (descr != (ElfN_Addr) -1 || !errno) {
       tpid = ptrace(PTRACE_PEEKDATA, pid, descr + pidOff, 0);
       if (tpid != -1 || !errno)
         *pptr++ = tpid;
@@ -438,8 +440,8 @@ static int find_stables(ElfN_Ehdr *hdr, int fd, Symbols syms)
       if (!(syms->symbols = (ElfN_Sym *) malloc(shdr.sh_size)))
         quit("Could not allocate symbol table.");
 
-      if (lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
-          read(fd, syms->symbols, shdr.sh_size) != shdr.sh_size)
+      if ((ElfN_Off) lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
+          (uintN_t) read(fd, syms->symbols, shdr.sh_size) != shdr.sh_size)
         quit("Could not read symbol table.");
 
       i = hdr->e_shoff + shdr.sh_link * hdr->e_shentsize;
@@ -449,8 +451,8 @@ static int find_stables(ElfN_Ehdr *hdr, int fd, Symbols syms)
         quit("Could not read string table section header.");
       if (!(syms->strings = malloc(shdr.sh_size)))
         quit("Could not allocate string table.");
-      if (lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
-          read(fd, syms->strings, shdr.sh_size) != shdr.sh_size)
+      if ((ElfN_Off) lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
+          (uintN_t) read(fd, syms->strings, shdr.sh_size) != shdr.sh_size)
         quit("Could not read string table.");
       lseek(fd, spot, SEEK_SET);
       break;
@@ -458,8 +460,8 @@ static int find_stables(ElfN_Ehdr *hdr, int fd, Symbols syms)
       syms->ndyns = shdr.sh_size / sizeof(ElfN_Dyn);
       if (!(syms->dynamic = (ElfN_Dyn *) malloc(shdr.sh_size)))
         quit("Out of memory.");
-      if (lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
-          read(fd, syms->dynamic, shdr.sh_size) != shdr.sh_size)
+      if ((ElfN_Off) lseek(fd, shdr.sh_offset, SEEK_SET) != shdr.sh_offset ||
+          (uintN_t) read(fd, syms->dynamic, shdr.sh_size) != shdr.sh_size)
         quit("Could not read dynamic table.");
       lseek(fd, spot, SEEK_SET);
       break;
@@ -542,16 +544,17 @@ static void resolveSymbols(Symbols syms, int offset)
   }
 }
 
-static void loadString(pid_t pid, ElfN_Addr addr, char *dp, int bytes)
+static void loadString(pid_t pid, ElfN_Addr addr, char *dp, unsigned int bytes)
 {
-  long *lp = (long *) dp, nr;
+  long *lp = (long *) dp;
+  unsigned int nr;
   int error_occured = 0;
 
   memset(dp, 0, bytes);
   errno = 0;
 
   addr = ptrace(PTRACE_PEEKDATA, pid, addr, 0);
-  if (addr == -1 && errno)
+  if (addr == (ElfN_Addr) -1 && errno)
     error_occured = 0;
 
   for (nr = 0; bytes > sizeof(long) && strlen(dp) == nr;
@@ -571,7 +574,7 @@ static void loadString(pid_t pid, ElfN_Addr addr, char *dp, int bytes)
 }
 
 static void readLinkMap(int pid, ElfN_Addr base,
-                        struct link_map *lm, char *name, int namelen)
+                        struct link_map *lm, char *name, unsigned int namelen)
 {
   /* base address */
   lm->l_addr = (ElfN_Addr) ptrace(PTRACE_PEEKDATA, pid,
@@ -710,7 +713,7 @@ static char *cmdLine(int pid)
     for (i = 0; i < len; i++) if (!cmd[i]) cmd[i] = ' ';
     for ( ; len > 0 && cmd[len - 1] <= ' '; len--);
     cmd[len] = 0;
-    if (len >= sizeof(cmd) - 4)
+    if ((unsigned int) len >= sizeof(cmd) - 4)
       strcpy(&cmd[sizeof(cmd) - 4], "...");
   } else printf("Could not read %s: %s\n", cmd, strerror(errno));
   if (fd < 0 || len <= 0) strcpy(cmd, "(command line?)");
