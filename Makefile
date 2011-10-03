@@ -18,6 +18,14 @@ VERSION = $(shell awk 'END { print $$1 }' VERSION)
 CFLAGS ?= -Wall -Wextra
 CFLAGS += -DVERSION=\"$(VERSION)\"
 
+# Note: assignments are ignored for variable overriden on command line VAR=value
+# so DESTDIR is ignored for overriden variables
+PREFIX ?= /usr
+BINDIR ?= $(PREFIX)/bin
+BINDIR := $(DESTDIR)$(BINDIR)
+MANDIR ?= $(PREFIX)/share/man
+MANDIR := $(DESTDIR)$(MANDIR)
+
 
 pstack : pstack.c
 	$(CC) $(CFLAGS) -o pstack pstack.c
@@ -26,10 +34,10 @@ clean:
 	rm -f pstack
 
 install : pstack
-	mkdir -p $(BINDIR)
-	install -m 755 pstack $(BINDIR)
-	mkdir -p $(MANDIR)/man1
-	install -m 644 man1/pstack.1 $(MANDIR)/man1
+	mkdir -p "$(BINDIR)"
+	install -m 755 pstack "$(BINDIR)"
+	mkdir -p "$(MANDIR)/man1"
+	install -m 644 man1/pstack.1 "$(MANDIR)/man1"
 
 cvstag:
 	cvs tag -F $(CVSTAG) .
