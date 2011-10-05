@@ -488,7 +488,12 @@ static Symbols loadSyms(const char *fname)
     perror("opening object file");
     quit("Could not open object file.");
   }
-  read(fd, &hdr, sizeof(hdr));
+  if (read(fd, &hdr, sizeof(hdr)) < (int) sizeof(hdr))
+  {
+    fprintf(stderr, "'%s': ", fname);
+    perror("reading object file ELF header");
+    quit("Could not read object file ELF header.");
+  }
   verify_ident(&hdr);
   if (!find_stables(&hdr, fd, syms)) {
     deleteSyms(syms);
