@@ -16,7 +16,7 @@
 
 VERSION = $(shell awk 'END { print $$1 }' VERSION)
 CFLAGS ?= -Wall -Wextra -g -O2
-CFLAGS += -DVERSION=\"$(VERSION)\"
+CPPFLAGS += -DVERSION=\"$(VERSION)\"
 
 # Note: assignments are ignored for variable overriden on command line VAR=value
 # so DESTDIR is ignored for overriden variables
@@ -28,7 +28,7 @@ MANDIR := $(DESTDIR)$(MANDIR)
 
 
 pstack : pstack.c
-	$(CC) $(CFLAGS) -o pstack pstack.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o pstack pstack.c $(LDFLAGS)
 
 clean:
 	rm -f pstack
