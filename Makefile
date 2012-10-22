@@ -28,7 +28,7 @@ MANDIR := $(DESTDIR)$(MANDIR)
 
 
 pstack : pstack.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o pstack pstack.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o pstack $^ $(LDFLAGS)
 
 clean:
 	rm -f pstack
