@@ -115,6 +115,7 @@
 #define NEXT_FRAME_POINTER_ADDR(fp) (fp)
 #define NEXT_PROGRAM_COUNTER_ADDR(fp) ((fp) + __SIZEOF_POINTER__)
 #define DECLARE_REGS_STRUCT(regs) struct user_regs_struct regs
+#define VDSO_NAME "linux-vdso.so.1"
 #elif defined(__ARMEL__) /* armel */
 #define ELF_MACHINE EM_ARM
 #define PROGRAM_COUNTER(regs) (regs.ARM_pc)
@@ -122,6 +123,7 @@
 #define NEXT_FRAME_POINTER_ADDR(fp) ((fp) - __SIZEOF_POINTER__)
 #define NEXT_PROGRAM_COUNTER_ADDR(fp) (fp)
 #define DECLARE_REGS_STRUCT(regs) struct user_regs regs
+#define VDSO_NAME ""
 #elif defined(__ppc64__) || defined(__alpha__) || defined(__ia64__) || defined(s390x__)
 #error Not (yet) supported architecture, patches welcomes :-)
 #else
@@ -480,6 +482,8 @@ static Symbols loadSyms(const char *fname)
   Symbols syms;
 
   if (*fname == '\0')
+    return (Symbols) 0;
+  if (!strcmp(VDSO_NAME, fname))
     return (Symbols) 0;
   syms = newSyms(fname);
   if ((fd = open(fname, O_RDONLY)) < 0)
